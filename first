@@ -1,33 +1,23 @@
-print("[MM2 Helper] Загрузка интерфейса...")
+print("[MM2 Helper] Загрузка скрипта...")
 
--- Прямой источник WindUI с GitHub
 local WIND_UI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 
 local success, WindUI = pcall(function()
     return loadstring(game:HttpGet(WIND_UI_URL))()
 end)
 
--- Если основная ссылка недоступна, используем официальное зеркало
 if not success or not WindUI then
-    warn("[MM2 Helper] Ошибка первичной загрузки. Загружаем из зеркала...")
-    local mirrorUrl = "https://github.com/FootGes/WindUI/releases/latest/download/main.lua"
-    success, WindUI = pcall(function()
-        return loadstring(game:HttpGet(mirrorUrl))()
-    end)
-end
-
-if not success or not WindUI then
-    error("[MM2 Helper] Не удалось загрузить WindUI. Проверьте интернет-соединение или доступ к GitHub.")
+    error("[MM2 Helper] Не удалось загрузить WindUI с GitHub!")
     return
 end
-
-print("[MM2 Helper] WindUI успешно загружен!")
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
+-- База цен предметов (Ключи должны совпадать с очищенным именем cleanName)
 local ItemDatabase = {
+    ["Bubbles"] = {value = 10, image = "rbxassetid://10723345869"},
     ["Corrupt"] = {value = 1850, image = "rbxassetid://4725513813"},
     ["Harvester"] = {value = 1200, image = "rbxassetid://11303862206"},
     ["Icepiercer"] = {value = 1150, image = "rbxassetid://11822238418"},
@@ -47,22 +37,34 @@ local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-
 
 local InfoParagraph = InvTab:Paragraph({
     Title = "Статус",
-    Desc = "Нажмите 'Обновить инвентарь' для загрузки предметов.",
+    Desc = "Нажмите 'Обновить инвентарь' для загрузки.",
 })
+
+local function CleanItemName(rawName)
+    local cleanName = rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
+    return cleanName
+end
 
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
     if not playerGui then return inventory end
 
-    local mainGui = playerGui:FindFirstChild("MainGUI")
-    if mainGui and mainGui:FindFirstChild("Game") and mainGui.Game:FindFirstChild("Inventory") then
-        local invContainer = mainGui.Game.Inventory.Main.Weapons.Items.Container
-        for _, category in ipairs(invContainer:GetChildren()) do
-            for _, itemBox in ipairs(category:GetChildren()) do
-                if itemBox:IsA("Frame") or itemBox:IsA("ImageButton") then
-                    table.insert(inventory, itemBox.Name)
-                end
+    local container = playerGui:FindFirstChild("MainGUI")
+        and playerGui.MainGUI:FindFirstChild("Game")
+        and playerGui.MainGUI.Game:FindFirstChild("Crafting")
+        and playerGui.MainGUI.Game.Crafting:FindFirstChild("Inventory")
+        and playerGui.MainGUI.Game.Crafting.Inventory:FindFirstChild("Salvage")
+        and playerGui.MainGUI.Game.Crafting.Inventory.Salvage:FindFirstChild("ScrollFrame")
+        and playerGui.MainGUI.Game.Crafting.Inventory.Salvage.ScrollFrame:FindFirstChild("Container")
+
+    if container then
+        for _, itemFrame in ipairs(container:GetChildren()) do
+            if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIGridLayout") and not itemFrame:IsA("UIPadding") then
+                table.insert(inventory, {
+                    rawName = itemFrame.Name,
+                    cleanName = CleanItemName(itemFrame.Name)
+                })
             end
         end
     end
@@ -93,12 +95,15 @@ local function BuildInventoryGrid()
 
     local totalVal = 0
 
-    for _, itemName in ipairs(playerItems) do
-        local itemData = ItemDatabase[itemName] or {value = 0, image = DEFAULT_ICON}
+    for _, itemDataInfo in ipairs(playerItems) do
+        local clean = itemDataInfo.cleanName
+        local raw = itemDataInfo.rawName
+
+        local itemData = ItemDatabase[clean] or {value = 0, image = DEFAULT_ICON}
         totalVal = totalVal + itemData.value
 
         local btn = Instance.new("ImageButton")
-        btn.Name = itemName
+        btn.Name = raw
         btn.Image = itemData.image
         btn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
         btn.BorderSizePixel = 0
@@ -114,19 +119,20 @@ local function BuildInventoryGrid()
         valLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         valLabel.BackgroundTransparency = 0.4
         valLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-        valLabel.TextSize = 11
+        valLabel.TextSize = 10
         valLabel.Font = Enum.Font.SourceSansBold
-        valLabel.Text = tostring(itemData.value) .. " Val"
+        valLabel.Text = clean .. "\n" .. tostring(itemData.value) .. " V"
         valLabel.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
             local tradeEvent = ReplicatedStorage:FindFirstChild("Trade") 
                 and ReplicatedStorage.Trade:FindFirstChild("OfferItem")
             if tradeEvent then
-                tradeEvent:FireServer(itemName)
+                -- Отправляем сырое имя предмета (raw), чтобы игра поняла, о каком предмете речь
+                tradeEvent:FireServer(raw)
                 WindUI:Notify({
                     Title = "Трейд",
-                    Content = "Предмет " .. itemName .. " добавлен в обмен!",
+                    Content = "Предмет " .. clean .. " добавлен в обмен!",
                     Duration = 2,
                 })
             end
