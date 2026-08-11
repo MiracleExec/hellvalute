@@ -1,21 +1,23 @@
--- Включаем логирование ошибок в консоль (нажмите F9 в игре, чтобы открыть)
-print("[MM2 Helper] Запуск скрипта...")
+print("[MM2 Helper] Загрузка интерфейса...")
 
--- 1. Безопасная загрузка библиотеки WindUI
+-- Прямой источник WindUI с GitHub
+local WIND_UI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+
 local success, WindUI = pcall(function()
-    return loadstring(game:HttpGet("https://raw.githubusercontent.com/FootGes/WindUI/main/dist/main.lua"))()
+    return loadstring(game:HttpGet(WIND_UI_URL))()
 end)
 
--- Если библиотека не загрузилась, пробуем резервный зеркальный источник
+-- Если основная ссылка недоступна, используем официальное зеркало
 if not success or not WindUI then
-    warn("[MM2 Helper] Ошибка загрузки WindUI через основной источник. Пробуем резервный...")
+    warn("[MM2 Helper] Ошибка первичной загрузки. Загружаем из зеркала...")
+    local mirrorUrl = "https://github.com/FootGes/WindUI/releases/latest/download/main.lua"
     success, WindUI = pcall(function()
-        return loadstring(game:HttpGet("https://tree-hub.vercel.app/api/UI/WindUI"))()
+        return loadstring(game:HttpGet(mirrorUrl))()
     end)
 end
 
 if not success or not WindUI then
-    error("[MM2 Helper] Критическая ошибка: Не удалось загрузить WindUI! Проверьте консоль F9.")
+    error("[MM2 Helper] Не удалось загрузить WindUI. Проверьте интернет-соединение или доступ к GitHub.")
     return
 end
 
@@ -25,7 +27,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- 2. База данных предметов
 local ItemDatabase = {
     ["Corrupt"] = {value = 1850, image = "rbxassetid://4725513813"},
     ["Harvester"] = {value = 1200, image = "rbxassetid://11303862206"},
@@ -34,7 +35,6 @@ local ItemDatabase = {
 }
 local DEFAULT_ICON = "rbxassetid://10723345869"
 
--- 3. Создание окна
 local Window = WindUI:CreateWindow({
     Title = "MM2 Inventory Helper",
     Icon = "box",
@@ -47,10 +47,9 @@ local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-
 
 local InfoParagraph = InvTab:Paragraph({
     Title = "Статус",
-    Desc = "Нажмите 'Обновить инвентарь' для поиска предметов.",
+    Desc = "Нажмите 'Обновить инвентарь' для загрузки предметов.",
 })
 
--- 4. Функция безопасного поиска инвентаря
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -70,7 +69,6 @@ local function GetPlayerInventory()
     return inventory
 end
 
--- 5. Построение сетки
 local gridFrame = nil
 
 local function BuildInventoryGrid()
@@ -146,7 +144,6 @@ InvTab:Button({
     end,
 })
 
--- Запуск сбора
 task.spawn(function()
     task.wait(1)
     BuildInventoryGrid()
