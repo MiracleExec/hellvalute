@@ -1,23 +1,40 @@
+-- Включаем логирование ошибок в консоль (нажмите F9 в игре, чтобы открыть)
+print("[MM2 Helper] Запуск скрипта...")
+
+-- 1. Безопасная загрузка библиотеки WindUI
+local success, WindUI = pcall(function()
+    return loadstring(game:HttpGet("https://raw.githubusercontent.com/FootGes/WindUI/main/dist/main.lua"))()
+end)
+
+-- Если библиотека не загрузилась, пробуем резервный зеркальный источник
+if not success or not WindUI then
+    warn("[MM2 Helper] Ошибка загрузки WindUI через основной источник. Пробуем резервный...")
+    success, WindUI = pcall(function()
+        return loadstring(game:HttpGet("https://tree-hub.vercel.app/api/UI/WindUI"))()
+    end)
+end
+
+if not success or not WindUI then
+    error("[MM2 Helper] Критическая ошибка: Не удалось загрузить WindUI! Проверьте консоль F9.")
+    return
+end
+
+print("[MM2 Helper] WindUI успешно загружен!")
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- 1. Подключение библиотеки WindUI
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-
--- 2. База данных цен и ID иконок предметов MM2
+-- 2. База данных предметов
 local ItemDatabase = {
     ["Corrupt"] = {value = 1850, image = "rbxassetid://4725513813"},
     ["Harvester"] = {value = 1200, image = "rbxassetid://11303862206"},
     ["Icepiercer"] = {value = 1150, image = "rbxassetid://11822238418"},
     ["Bat"] = {value = 1100, image = "rbxassetid://11303860010"},
-    ["Chroma Lightbringer"] = {value = 320, image = "rbxassetid://4725514000"},
 }
-
--- Fallback иконка, если предмета нет в локальной базе
 local DEFAULT_ICON = "rbxassetid://10723345869"
 
--- 3. Создание окна WindUI
+-- 3. Создание окна
 local Window = WindUI:CreateWindow({
     Title = "MM2 Inventory Helper",
     Icon = "box",
@@ -28,21 +45,20 @@ local Window = WindUI:CreateWindow({
 
 local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-grid" })
 
--- Информационная панель над сеткой
 local InfoParagraph = InvTab:Paragraph({
-    Title = "Инвентарь не загружен",
-    Desc = "Нажмите 'Обновить инвентарь', чтобы загрузить предметы.",
+    Title = "Статус",
+    Desc = "Нажмите 'Обновить инвентарь' для поиска предметов.",
 })
 
--- 4. Функция сканирования инвентаря MM2
+-- 4. Функция безопасного поиска инвентаря
 local function GetPlayerInventory()
     local inventory = {}
-    
-    -- Сканируем GUI инвентаря MM2
-    local mainGui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("MainGUI")
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return inventory end
+
+    local mainGui = playerGui:FindFirstChild("MainGUI")
     if mainGui and mainGui:FindFirstChild("Game") and mainGui.Game:FindFirstChild("Inventory") then
         local invContainer = mainGui.Game.Inventory.Main.Weapons.Items.Container
-        
         for _, category in ipairs(invContainer:GetChildren()) do
             for _, itemBox in ipairs(category:GetChildren()) do
                 if itemBox:IsA("Frame") or itemBox:IsA("ImageButton") then
@@ -51,25 +67,18 @@ local function GetPlayerInventory()
             end
         end
     end
-    
     return inventory
 end
 
--- 5. Построение сетки UIGridLayout внутри WindUI
+-- 5. Построение сетки
 local gridFrame = nil
 
 local function BuildInventoryGrid()
-    -- Удаляем старую сетку, если она уже создана
-    if gridFrame then
-        gridFrame:Destroy()
-    end
+    if gridFrame then gridFrame:Destroy() end
 
     local playerItems = GetPlayerInventory()
-    
-    -- Получаем доступ к родительскому UI-контейнеру вкладки WindUI
-    local tabContainer = InvTab.Page -- Внутренний Frame страницы вкладки
-    
-    -- Создаем ScrollingFrame для сетки
+    local tabContainer = InvTab.Page 
+
     gridFrame = Instance.new("ScrollingFrame")
     gridFrame.Name = "InventoryGrid"
     gridFrame.Size = UDim2.new(1, 0, 0, 220)
@@ -78,7 +87,6 @@ local function BuildInventoryGrid()
     gridFrame.ScrollBarThickness = 4
     gridFrame.Parent = tabContainer
 
-    -- Настраиваем UIGridLayout (сетка 4x4)
     local gridLayout = Instance.new("UIGridLayout")
     gridLayout.CellSize = UDim2.fromOffset(80, 80)
     gridLayout.CellPadding = UDim2.fromOffset(8, 8)
@@ -87,12 +95,10 @@ local function BuildInventoryGrid()
 
     local totalVal = 0
 
-    -- Отрисовка карточек предметов
     for _, itemName in ipairs(playerItems) do
         local itemData = ItemDatabase[itemName] or {value = 0, image = DEFAULT_ICON}
         totalVal = totalVal + itemData.value
 
-        -- Кнопка предмета
         local btn = Instance.new("ImageButton")
         btn.Name = itemName
         btn.Image = itemData.image
@@ -100,12 +106,10 @@ local function BuildInventoryGrid()
         btn.BorderSizePixel = 0
         btn.Parent = gridFrame
 
-        -- Закругление углов (UICorner)
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 8)
         corner.Parent = btn
 
-        -- Текст ценности предмета поверх иконки
         local valLabel = Instance.new("TextLabel")
         valLabel.Size = UDim2.new(1, 0, 0, 18)
         valLabel.Position = UDim2.new(0, 0, 1, -18)
@@ -117,11 +121,9 @@ local function BuildInventoryGrid()
         valLabel.Text = tostring(itemData.value) .. " Val"
         valLabel.Parent = btn
 
-        -- Клик по предмету: добавление в трейд MM2
         btn.MouseButton1Click:Connect(function()
             local tradeEvent = ReplicatedStorage:FindFirstChild("Trade") 
                 and ReplicatedStorage.Trade:FindFirstChild("OfferItem")
-            
             if tradeEvent then
                 tradeEvent:FireServer(itemName)
                 WindUI:Notify({
@@ -134,10 +136,9 @@ local function BuildInventoryGrid()
     end
 
     InfoParagraph:SetTitle("Найдено предметов: " .. #playerItems)
-    InfoParagraph:SetDesc("Общая стоимость инвентаря: " .. totalVal .. " Val")
+    InfoParagraph:SetDesc("Общая стоимость: " .. totalVal .. " Val")
 end
 
--- Кнопка ручного обновления сетки
 InvTab:Button({
     Title = "Обновить инвентарь",
     Callback = function()
@@ -145,5 +146,8 @@ InvTab:Button({
     end,
 })
 
--- Первичная сборка сетки при запуске
-task.delay(1, BuildInventoryGrid)
+-- Запуск сбора
+task.spawn(function()
+    task.wait(1)
+    BuildInventoryGrid()
+end)
