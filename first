@@ -1,5 +1,6 @@
 print("[MM2 Helper] Запуск скрипта...")
 
+-- 1. Загрузка библиотеки WindUI напрямую с GitHub
 local WIND_UI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 
 local success, WindUI = pcall(function()
@@ -7,26 +8,39 @@ local success, WindUI = pcall(function()
 end)
 
 if not success or not WindUI then
-    error("[MM2 Helper] Не удалось загрузить WindUI с GitHub!")
+    warn("[MM2 Helper] Ошибка загрузки WindUI с основного источника. Пробуем зеркало...")
+    local mirrorUrl = "https://github.com/FootGes/WindUI/releases/latest/download/main.lua"
+    success, WindUI = pcall(function()
+        return loadstring(game:HttpGet(mirrorUrl))()
+    end)
+end
+
+if not success or not WindUI then
+    error("[MM2 Helper] Не удалось загрузить WindUI! Проверьте интернет-соединение.")
     return
 end
 
+print("[MM2 Helper] WindUI успешно загружен!")
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContentProvider = game:GetService("ContentProvider")
 local LocalPlayer = Players.LocalPlayer
 
--- База цен предметов (Картинка подгружается автоматически из GUI)
+-- 2. База данных цен (Заполняйте ценности по очищенному имени предмета)
 local ItemDatabase = {
     ["Bubbles"] = {value = 10},
     ["Corrupt"] = {value = 1850},
     ["Harvester"] = {value = 1200},
     ["Icepiercer"] = {value = 1150},
     ["Bat"] = {value = 1100},
+    ["Nikilis Scythe"] = {value = 150000},
 }
 local DEFAULT_ICON = "rbxassetid://10723345869"
 
+-- 3. Создание окна WindUI
 local Window = WindUI:CreateWindow({
-    Title = "MM2 Inventory Helper",
+    Title = "MM2 Trade & Inventory Helper",
     Icon = "box",
     Author = "Value Helper",
     Size = UDim2.fromOffset(460, 380),
@@ -40,33 +54,55 @@ local InfoParagraph = InvTab:Paragraph({
     Desc = "Нажмите 'Обновить инвентарь' для загрузки предметов.",
 })
 
--- Функция очистки имени (Bubbles_K_2026 -> Bubbles)
+-- 4. Функция очистки имени (например, Bubbles_K_2026 -> Bubbles)
 local function CleanItemName(rawName)
     local cleanName = rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
     return cleanName
 end
 
--- Точное извлечение иконки по вашему пути (.Container.Icon)
-local function GetItemImage(itemFrame)
-    local innerContainer = itemFrame:FindFirstChild("Container")
-    if innerContainer then
-        local icon = innerContainer:FindFirstChild("Icon")
-        if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) and icon.Image ~= "" then
-            return icon.Image
-        end
+-- 5. Парсинг ссылки картинки (Превращает rbxthumb://...&id=138388933477235... в rbxassetid://138388933477235)
+local function ExtractAssetUrl(rawImageContent)
+    if not rawImageContent then return DEFAULT_ICON end
+    local str = tostring(rawImageContent)
+
+    -- Вытаскиваем ID ассета из rbxthumb ссылки
+    local assetId = str:match("id=(%d+)")
+    if assetId then
+        return "rbxassetid://" .. assetId
     end
 
-    -- Резервный поиск вглубь
-    local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
-        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
-    
-    if fallbackIcon and fallbackIcon.Image ~= "" then
-        return fallbackIcon.Image
+    if str:find("rbxassetid://") or str:find("rbxthumb://") then
+        return str
     end
 
     return DEFAULT_ICON
 end
 
+-- 6. Извлечение иконки прямо из объекта предмета в GUI MM2 (.Container.Icon)
+local function GetItemImage(itemFrame)
+    local innerContainer = itemFrame:FindFirstChild("Container")
+    if innerContainer then
+        local icon = innerContainer:FindFirstChild("Icon")
+        if icon then
+            local rawImg = icon.Image
+            if rawImg and tostring(rawImg) ~= "" then
+                return ExtractAssetUrl(rawImg)
+            end
+        end
+    end
+
+    -- Резервный поиск, если структура немного отличается
+    local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
+        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
+
+    if fallbackIcon and fallbackIcon.Image then
+        return ExtractAssetUrl(fallbackIcon.Image)
+    end
+
+    return DEFAULT_ICON
+end
+
+-- 7. Сканирование вашего инвентаря
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -94,10 +130,14 @@ local function GetPlayerInventory()
                 })
             end
         end
+    else
+        warn("[MM2 Helper] Контейнер инвентаря не найден. Откройте окно крафта/инвентаря в игре!")
     end
+
     return inventory
 end
 
+-- 8. Отрисовка кастомной сетки инвентаря
 local gridFrame = nil
 
 local function BuildInventoryGrid()
@@ -137,6 +177,13 @@ local function BuildInventoryGrid()
         btn.BorderSizePixel = 0
         btn.Parent = gridFrame
 
+        -- Предзагрузка ассета картинки в память клиента
+        task.spawn(function()
+            pcall(function()
+                ContentProvider:PreloadAsync({btn})
+            end)
+        end)
+
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 8)
         corner.Parent = btn
@@ -152,6 +199,7 @@ local function BuildInventoryGrid()
         valLabel.Text = clean .. "\n" .. tostring(itemData.value) .. " V"
         valLabel.Parent = btn
 
+        -- При клике добавляем предмет в реальный трейд MM2
         btn.MouseButton1Click:Connect(function()
             local tradeEvent = ReplicatedStorage:FindFirstChild("Trade") 
                 and ReplicatedStorage.Trade:FindFirstChild("OfferItem")
@@ -162,14 +210,21 @@ local function BuildInventoryGrid()
                     Content = "Предмет " .. clean .. " добавлен в обмен!",
                     Duration = 2,
                 })
+            else
+                WindUI:Notify({
+                    Title = "Ошибка",
+                    Content = "Окно трейда в MM2 не открыто!",
+                    Duration = 2,
+                })
             end
         end)
     end
 
     InfoParagraph:SetTitle("Найдено предметов: " .. #playerItems)
-    InfoParagraph:SetDesc("Общая стоимость: " .. totalVal .. " Val")
+    InfoParagraph:SetDesc("Общая стоимость инвентаря: " .. totalVal .. " Val")
 end
 
+-- Кнопка ручной перезагрузки
 InvTab:Button({
     Title = "Обновить инвентарь",
     Callback = function()
@@ -177,6 +232,7 @@ InvTab:Button({
     end,
 })
 
+-- Автоматический запуск генерации сетки при включении
 task.spawn(function()
     task.wait(1)
     BuildInventoryGrid()
