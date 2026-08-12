@@ -1,4 +1,4 @@
-print("[MM2 Helper] Загрузка скрипта...")
+print("[MM2 Helper] Запуск скрипта...")
 
 local WIND_UI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 
@@ -15,13 +15,13 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- База цен предметов (Ключи должны совпадать с очищенным именем cleanName)
+-- База цен предметов (Картинка подгружается автоматически из GUI)
 local ItemDatabase = {
-    ["Bubbles"] = {value = 10, image = "rbxassetid://10723345869"},
-    ["Corrupt"] = {value = 1850, image = "rbxassetid://4725513813"},
-    ["Harvester"] = {value = 1200, image = "rbxassetid://11303862206"},
-    ["Icepiercer"] = {value = 1150, image = "rbxassetid://11822238418"},
-    ["Bat"] = {value = 1100, image = "rbxassetid://11303860010"},
+    ["Bubbles"] = {value = 10},
+    ["Corrupt"] = {value = 1850},
+    ["Harvester"] = {value = 1200},
+    ["Icepiercer"] = {value = 1150},
+    ["Bat"] = {value = 1100},
 }
 local DEFAULT_ICON = "rbxassetid://10723345869"
 
@@ -37,12 +37,34 @@ local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-
 
 local InfoParagraph = InvTab:Paragraph({
     Title = "Статус",
-    Desc = "Нажмите 'Обновить инвентарь' для загрузки.",
+    Desc = "Нажмите 'Обновить инвентарь' для загрузки предметов.",
 })
 
+-- Функция очистки имени (Bubbles_K_2026 -> Bubbles)
 local function CleanItemName(rawName)
     local cleanName = rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
     return cleanName
+end
+
+-- Точное извлечение иконки по вашему пути (.Container.Icon)
+local function GetItemImage(itemFrame)
+    local innerContainer = itemFrame:FindFirstChild("Container")
+    if innerContainer then
+        local icon = innerContainer:FindFirstChild("Icon")
+        if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) and icon.Image ~= "" then
+            return icon.Image
+        end
+    end
+
+    -- Резервный поиск вглубь
+    local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
+        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
+    
+    if fallbackIcon and fallbackIcon.Image ~= "" then
+        return fallbackIcon.Image
+    end
+
+    return DEFAULT_ICON
 end
 
 local function GetPlayerInventory()
@@ -61,9 +83,14 @@ local function GetPlayerInventory()
     if container then
         for _, itemFrame in ipairs(container:GetChildren()) do
             if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIGridLayout") and not itemFrame:IsA("UIPadding") then
+                local rawName = itemFrame.Name
+                local cleanName = CleanItemName(rawName)
+                local detectedImage = GetItemImage(itemFrame)
+
                 table.insert(inventory, {
-                    rawName = itemFrame.Name,
-                    cleanName = CleanItemName(itemFrame.Name)
+                    rawName = rawName,
+                    cleanName = cleanName,
+                    image = detectedImage
                 })
             end
         end
@@ -95,16 +122,17 @@ local function BuildInventoryGrid()
 
     local totalVal = 0
 
-    for _, itemDataInfo in ipairs(playerItems) do
-        local clean = itemDataInfo.cleanName
-        local raw = itemDataInfo.rawName
+    for _, itemInfo in ipairs(playerItems) do
+        local clean = itemInfo.cleanName
+        local raw = itemInfo.rawName
+        local itemImg = itemInfo.image
 
-        local itemData = ItemDatabase[clean] or {value = 0, image = DEFAULT_ICON}
+        local itemData = ItemDatabase[clean] or {value = 0}
         totalVal = totalVal + itemData.value
 
         local btn = Instance.new("ImageButton")
         btn.Name = raw
-        btn.Image = itemData.image
+        btn.Image = itemImg
         btn.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
         btn.BorderSizePixel = 0
         btn.Parent = gridFrame
@@ -114,8 +142,8 @@ local function BuildInventoryGrid()
         corner.Parent = btn
 
         local valLabel = Instance.new("TextLabel")
-        valLabel.Size = UDim2.new(1, 0, 0, 18)
-        valLabel.Position = UDim2.new(0, 0, 1, -18)
+        valLabel.Size = UDim2.new(1, 0, 0, 22)
+        valLabel.Position = UDim2.new(0, 0, 1, -22)
         valLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         valLabel.BackgroundTransparency = 0.4
         valLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
@@ -128,7 +156,6 @@ local function BuildInventoryGrid()
             local tradeEvent = ReplicatedStorage:FindFirstChild("Trade") 
                 and ReplicatedStorage.Trade:FindFirstChild("OfferItem")
             if tradeEvent then
-                -- Отправляем сырое имя предмета (raw), чтобы игра поняла, о каком предмете речь
                 tradeEvent:FireServer(raw)
                 WindUI:Notify({
                     Title = "Трейд",
