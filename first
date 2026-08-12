@@ -1,4 +1,4 @@
-print("[MM2 Viewer] Запуск через клонирование GUI...")
+print("[MM2 Viewer] Чтение только из Salvage.ScrollFrame.Container...")
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,33 +18,87 @@ local ItemDatabaseValues = {
     ["Bat"] = 1100,
     ["Nikilis Scythe"] = 150000,
 }
+local DEFAULT_ICON = "rbxassetid://10723345869"
 
--- 1. Поиск оригинальных визуальных элементов инвентаря MM2
-local function FindGameInventoryContainers()
-    local containers = {}
-    local mainGui = PlayerGui:FindFirstChild("MainGUI")
-    
-    if mainGui then
-        -- Поиск всех ScrollingFrame и Container внутри GUI инвентаря
-        for _, desc in ipairs(mainGui:GetDescendants()) do
-            if (desc.Name == "Container" or desc.Name == "ScrollFrame") and #desc:GetChildren() > 0 then
-                local hasGuiItems = false
-                for _, child in ipairs(desc:GetChildren()) do
-                    if child:IsA("GuiObject") and not child:IsA("UIComponent") then
-                        hasGuiItems = true
-                        break
+-- 1. Предварительное сканирование базы данных MM2 для получения всех икон
+local AssetDatabase = {}
+pcall(function()
+    local db = ReplicatedStorage:FindFirstChild("Database") or ReplicatedStorage:FindFirstChild("ItemDatabase")
+    if db then
+        for _, module in ipairs(db:GetDescendants()) do
+            if module:IsA("ModuleScript") then
+                local success, data = pcall(require, module)
+                if success and type(data) == "table" then
+                    for itemName, itemDetails in pairs(data) do
+                        if type(itemDetails) == "table" then
+                            local imgId = itemDetails.Image or itemDetails.Icon or itemDetails.AssetId
+                            if imgId then
+                                local idOnly = tostring(imgId):match("(%d+)")
+                                if idOnly then
+                                    AssetDatabase[tostring(itemName)] = "rbxassetid://" .. idOnly
+                                end
+                            end
+                        end
                     end
-                end
-                if hasGuiItems then
-                    table.insert(containers, desc)
                 end
             end
         end
     end
-    return containers
+end)
+
+-- 2. Очистка имени предмета от суффиксов
+local function CleanItemName(rawName)
+    return rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
 end
 
--- 2. Создание GUI
+-- 3. Извлечение предметов СТРОГО из указанного контейнера
+local function GetSalvageItems()
+    local items = {}
+    
+    local targetContainer = PlayerGui:FindFirstChild("MainGUI")
+        and PlayerGui.MainGUI:FindFirstChild("Game")
+        and PlayerGui.MainGUI.Game:FindFirstChild("Crafting")
+        and PlayerGui.MainGUI.Game.Crafting:FindFirstChild("Inventory")
+        and PlayerGui.MainGUI.Game.Crafting.Inventory:FindFirstChild("Salvage")
+        and PlayerGui.MainGUI.Game.Crafting.Inventory.Salvage:FindFirstChild("ScrollFrame")
+        and PlayerGui.MainGUI.Game.Crafting.Inventory.Salvage.ScrollFrame:FindFirstChild("Container")
+
+    if targetContainer then
+        for _, itemFrame in ipairs(targetContainer:GetChildren()) do
+            if itemFrame:IsA("GuiObject") and itemFrame.Name ~= "Template" and not itemFrame:IsA("UIComponent") then
+                local rawName = itemFrame.Name
+                local cleanName = CleanItemName(rawName)
+                
+                -- Сначала ищем картинку прямо внутри элемента
+                local finalImage = nil
+                local imgObj = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
+                    or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
+
+                if imgObj and imgObj.Image and imgObj.Image ~= "" and imgObj.Image ~= "nil" then
+                    local idOnly = tostring(imgObj.Image):match("(%d+)")
+                    if idOnly then
+                        finalImage = "rbxassetid://" .. idOnly
+                    end
+                end
+
+                -- Если картинки в UI нет (не подгрузилась), берем из базы данных игры
+                if not finalImage then
+                    finalImage = AssetDatabase[cleanName] or AssetDatabase[rawName] or DEFAULT_ICON
+                end
+
+                table.insert(items, {
+                    rawName = rawName,
+                    cleanName = cleanName,
+                    image = finalImage
+                })
+            end
+        end
+    end
+
+    return items
+end
+
+-- 4. Создание UI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MM2SimpleInventoryGui"
 screenGui.ResetOnSpawn = false
@@ -77,7 +131,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -40, 1, 0)
 title.Position = UDim2.new(0, 12, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Мой Инвентарь MM2"
+title.Text = "Предметы из Salvage Container"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.SourceSansBold
@@ -118,7 +172,7 @@ local infoText = Instance.new("TextLabel")
 infoText.Size = UDim2.new(1, -16, 1, 0)
 infoText.Position = UDim2.new(0, 8, 0, 0)
 infoText.BackgroundTransparency = 1
-infoText.Text = "Сканирование инвентаря MM2..."
+infoText.Text = "Чтение Salvage.Container..."
 infoText.TextColor3 = Color3.fromRGB(200, 200, 210)
 infoText.TextSize = 12
 infoText.Font = Enum.Font.SourceSans
@@ -144,70 +198,42 @@ gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     scroll.CanvasSize = UDim2.fromOffset(0, gridLayout.AbsoluteContentSize.Y + 10)
 end)
 
--- 3. Отрисовка с извлечением картинок напрямую из UI предметов
+-- 5. Отрисовка
 local function RenderInventory()
-    local containers = FindGameInventoryContainers()
-    local addedItems = {}
-    local itemCount = 0
+    local salvageItems = GetSalvageItems()
     local totalVal = 0
 
-    for _, container in ipairs(containers) do
-        for _, itemFrame in ipairs(container:GetChildren()) do
-            if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIComponent") then
-                local rawName = itemFrame.Name
-                
-                -- Игнорируем технические элементы
-                if rawName ~= "Template" and not addedItems[itemFrame] then
-                    addedItems[itemFrame] = true
-                    
-                    -- Ищем картинку внутри рамочки
-                    local imgObj = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
-                        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
-                    
-                    local cleanName = rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
-                    local itemValue = ItemDatabaseValues[cleanName] or 0
-                    totalVal = totalVal + itemValue
-                    itemCount = itemCount + 1
+    for _, item in ipairs(salvageItems) do
+        local val = ItemDatabaseValues[item.cleanName] or 0
+        totalVal = totalVal + val
 
-                    -- Создаем карточку предмета
-                    local card = Instance.new("Frame")
-                    card.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
-                    card.BorderSizePixel = 0
-                    card.Parent = scroll
+        local card = Instance.new("Frame")
+        card.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+        card.BorderSizePixel = 0
+        card.Parent = scroll
 
-                    local cardCorner = Instance.new("UICorner")
-                    cardCorner.CornerRadius = UDim.new(0, 6)
-                    cardCorner.Parent = card
+        local cardCorner = Instance.new("UICorner")
+        cardCorner.CornerRadius = UDim.new(0, 6)
+        cardCorner.Parent = card
 
-                    if imgObj and imgObj.Image and imgObj.Image ~= "" then
-                        local iconClone = Instance.new("ImageLabel")
-                        iconClone.Size = UDim2.new(1, -8, 1, -8)
-                        iconClone.Position = UDim2.new(0, 4, 0, 4)
-                        iconClone.BackgroundTransparency = 1
-                        iconClone.Image = imgObj.Image
-                        iconClone.Parent = card
-                    else
-                        -- Если картинки нет, пишем название предмета
-                        local lbl = Instance.new("TextLabel")
-                        lbl.Size = UDim2.new(1, -4, 1, -4)
-                        lbl.Position = UDim2.new(0, 2, 0, 2)
-                        lbl.BackgroundTransparency = 1
-                        lbl.Text = cleanName
-                        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
-                        lbl.TextSize = 10
-                        lbl.TextWrapped = true
-                        lbl.Font = Enum.Font.SourceSans
-                        lbl.Parent = card
-                    end
-                end
-            end
-        end
+        local imgLabel = Instance.new("ImageLabel")
+        imgLabel.Size = UDim2.new(1, -8, 1, -8)
+        imgLabel.Position = UDim2.new(0, 4, 0, 4)
+        imgLabel.BackgroundTransparency = 1
+        imgLabel.Image = item.image
+        imgLabel.Parent = card
+
+        task.spawn(function()
+            pcall(function()
+                ContentProvider:PreloadAsync({imgLabel})
+            end)
+        end)
     end
 
-    infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", itemCount, totalVal)
+    infoText.Text = string.format("Предметов в Salvage: %d\nОбщая стоимость: %d Val", #salvageItems, totalVal)
 end
 
 task.spawn(function()
-    task.wait(0.3)
+    task.wait(0.2)
     RenderInventory()
 end)
