@@ -50,7 +50,7 @@ local Window = WindUI:CreateWindow({
 local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-grid" })
 
 Tab:Image({
-    Image = "rbxassetid://138388933477235",
+    Image = "rbxthumb://type=Asset&w=150&h=150&id=138388933477235&bust=4858",
     AspectRatio = "16:9",
     Radius = 12,
 })
