@@ -1,31 +1,16 @@
-print("[MM2 Helper] Запуск скрипта...")
-
--- 1. Безопасная загрузка WindUI через список зеркал
-local WIND_UI_URLS = {
-    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-}
-
-local WindUI = nil
-for _, url in ipairs(WIND_UI_URLS) do
-    local success, result = pcall(function()
-        return loadstring(game:HttpGet(url))()
-    end)
-    if success and result then
-        WindUI = result
-        break
-    end
-end
-
-if not WindUI then
-    error("[MM2 Helper] Не удалось загрузить WindUI с зеркал!")
-    return
-end
+print("[MM2 Viewer] Запуск чистого GUI...")
 
 local Players = game:GetService("Players")
 local ContentProvider = game:GetService("ContentProvider")
 local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- База цен предмета (по очищенному имени)
+-- Удаляем старое окно, если оно уже было создано
+if PlayerGui:FindFirstChild("MM2SimpleInventoryGui") then
+    PlayerGui.MM2SimpleInventoryGui:Destroy()
+end
+
+-- База цен предметов (по очищенному имени)
 local ItemDatabase = {
     ["Bubbles"] = {value = 10},
     ["Corrupt"] = {value = 1850},
@@ -36,17 +21,15 @@ local ItemDatabase = {
 }
 local DEFAULT_ICON = "rbxthumb://type=Asset&w=150&h=150&id=10723345869"
 
--- 2. Функция гарантированного превращения любой ссылки/ID в rbxthumb
+-- 1. Конвертация любых ID/ссылок в рабочий формат rbxthumb
 local function ToRbxThumb(rawImageContent)
     if not rawImageContent then return DEFAULT_ICON end
     local str = tostring(rawImageContent)
 
-    -- Если это уже rbxthumb ссылка — возвращаем как есть
     if str:find("rbxthumb://") then
         return str
     end
 
-    -- Вытаскиваем ID (числа) из rbxassetid://..., Content объекта или обычного текста
     local assetId = str:match("id=(%d+)") or str:match("(%d+)")
     if assetId then
         return "rbxthumb://type=Asset&w=150&h=150&id=" .. assetId
@@ -55,28 +38,12 @@ local function ToRbxThumb(rawImageContent)
     return DEFAULT_ICON
 end
 
--- 3. Создание окна UI
-local Window = WindUI:CreateWindow({
-    Title = "MM2 Inventory Viewer",
-    Icon = "box",
-    Author = "Simple Viewer",
-    Size = UDim2.fromOffset(450, 360),
-    Theme = "Dark",
-})
-
-local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-grid" })
-
-local InfoParagraph = InvTab:Paragraph({
-    Title = "Поиск предметов...",
-    Desc = "Загрузка инвентаря...",
-})
-
--- 4. Функция очистки имени ножа/пистолета
+-- 2. Очистка имени
 local function CleanItemName(rawName)
     return rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
 end
 
--- 5. Извлечение картинки из GUI инвентаря MM2
+-- 3. Получение иконки из элемента GUI инвентаря MM2
 local function GetItemImage(itemFrame)
     if not itemFrame then return DEFAULT_ICON end
 
@@ -101,7 +68,7 @@ local function GetItemImage(itemFrame)
     return DEFAULT_ICON
 end
 
--- 6. Чтение контейнера инвентаря
+-- 4. Сбор предметов из инвентаря MM2
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -133,29 +100,116 @@ local function GetPlayerInventory()
     return inventory
 end
 
--- 7. Отрисовка сетки с иконками
-local gridFrame = nil
+-- 5. Создание чистого GUI окна
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MM2SimpleInventoryGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = PlayerGui
 
-local function ShowInventory()
-    if gridFrame then gridFrame:Destroy() end
+-- Главный контейнер (можно перетаскивать при желании)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.fromOffset(420, 320)
+mainFrame.Position = UDim2.new(0.5, -210, 0.4, -160)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
 
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = mainFrame
+
+-- Шапка окна
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 35)
+header.BackgroundColor3 = Color3.fromRGB(28, 28, 35)
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 10)
+headerCorner.Parent = header
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Мой Инвентарь MM2"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 14
+title.Font = Enum.Font.SourceSansBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+-- Кнопка закрытия
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(25, 25)
+closeBtn.Position = UDim2.new(1, -30, 0, 5)
+closeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = header
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+end)
+
+-- Карточка со статистикой
+local infoFrame = Instance.new("Frame")
+infoFrame.Size = UDim2.new(1, -24, 0, 45)
+infoFrame.Position = UDim2.new(0, 12, 0, 45)
+infoFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 35)
+infoFrame.BorderSizePixel = 0
+infoFrame.Parent = mainFrame
+
+local infoCorner = Instance.new("UICorner")
+infoCorner.CornerRadius = UDim.new(0, 8)
+infoCorner.Parent = infoFrame
+
+local infoText = Instance.new("TextLabel")
+infoText.Size = UDim2.new(1, -16, 1, 0)
+infoText.Position = UDim2.new(0, 8, 0, 0)
+infoText.BackgroundTransparency = 1
+infoText.Text = "Загрузка предметов..."
+infoText.TextColor3 = Color3.fromRGB(200, 200, 210)
+infoText.TextSize = 12
+infoText.Font = Enum.Font.SourceSans
+infoText.TextXAlignment = Enum.TextXAlignment.Left
+infoText.Parent = infoFrame
+
+-- Сетка предметов (ScrollingFrame)
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -24, 0, 210)
+scroll.Position = UDim2.new(0, 12, 0, 98)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 4
+scroll.ScrollBarImageColor3 = Color3.fromRGB(60, 60, 75)
+scroll.Parent = mainFrame
+
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.fromOffset(62, 62)
+gridLayout.CellPadding = UDim2.fromOffset(6, 6)
+gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+gridLayout.Parent = scroll
+
+-- Автоматический размер скролла
+gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    scroll.CanvasSize = UDim2.fromOffset(0, gridLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- 6. Заполнение GUI данными
+local function RenderInventory()
     local playerItems = GetPlayerInventory()
-    local tabContainer = InvTab.Page 
-
-    gridFrame = Instance.new("ScrollingFrame")
-    gridFrame.Name = "SimpleInventoryGrid"
-    gridFrame.Size = UDim2.new(1, 0, 0, 230)
-    gridFrame.BackgroundTransparency = 1
-    gridFrame.BorderSizePixel = 0
-    gridFrame.ScrollBarThickness = 4
-    gridFrame.Parent = tabContainer
-
-    local gridLayout = Instance.new("UIGridLayout")
-    gridLayout.CellSize = UDim2.fromOffset(70, 70)
-    gridLayout.CellPadding = UDim2.fromOffset(6, 6)
-    gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    gridLayout.Parent = gridFrame
-
     local totalVal = 0
 
     for _, itemInfo in ipairs(playerItems) do
@@ -165,16 +219,18 @@ local function ShowInventory()
         local itemData = ItemDatabase[clean] or {value = 0}
         totalVal = totalVal + itemData.value
 
+        -- Рамка с картинкой ножа/пистолета
         local imgLabel = Instance.new("ImageLabel")
         imgLabel.Image = itemImg
-        imgLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        imgLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
         imgLabel.BorderSizePixel = 0
-        imgLabel.Parent = gridFrame
+        imgLabel.Parent = scroll
 
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 6)
-        corner.Parent = imgLabel
+        local imgCorner = Instance.new("UICorner")
+        imgCorner.CornerRadius = UDim.new(0, 6)
+        imgCorner.Parent = imgLabel
 
+        -- Предзагрузка иконки
         task.spawn(function()
             pcall(function()
                 ContentProvider:PreloadAsync({imgLabel})
@@ -182,11 +238,11 @@ local function ShowInventory()
         end)
     end
 
-    InfoParagraph:SetTitle("Найдено предметов: " .. #playerItems)
-    InfoParagraph:SetDesc("Общая стоимость инвентаря: " .. totalVal .. " Val")
+    infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", #playerItems, totalVal)
 end
 
+-- Небольшая задержка перед рендером
 task.spawn(function()
-    task.wait(1)
-    ShowInventory()
+    task.wait(0.5)
+    RenderInventory()
 end)
