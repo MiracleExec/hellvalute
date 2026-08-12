@@ -1,4 +1,4 @@
-print("[MM2 Viewer] Запуск с подгрузкой базы данных...")
+print("[MM2 Viewer] Запуск с прямыми ссылками Asset.ashx...")
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,139 +10,94 @@ if PlayerGui:FindFirstChild("MM2SimpleInventoryGui") then
     PlayerGui.MM2SimpleInventoryGui:Destroy()
 end
 
-local ItemDatabase = {
-    ["Bubbles"] = {value = 10},
-    ["Corrupt"] = {value = 1850},
-    ["Harvester"] = {value = 1200},
-    ["Icepiercer"] = {value = 1150},
-    ["Bat"] = {value = 1100},
-    ["Nikilis Scythe"] = {value = 150000},
+local ItemDatabaseValues = {
+    ["Bubbles"] = 10,
+    ["Corrupt"] = 1850,
+    ["Harvester"] = 1200,
+    ["Icepiercer"] = 1150,
+    ["Bat"] = 1100,
+    ["Nikilis Scythe"] = 150000,
 }
-local DEFAULT_ICON = "rbxthumb://type=Asset&w=150&h=150&id=10723345869"
 
--- 1. Парсинг внутренней базы данных MM2 для получения ID всех предметов
-local GameAssetDatabase = {}
-local function LoadMM2Database()
-    pcall(function()
-        local db = ReplicatedStorage:FindFirstChild("Database") or ReplicatedStorage:FindFirstChild("ItemDatabase")
-        if db then
-            for _, module in ipairs(db:GetDescendants()) do
-                if module:IsA("ModuleScript") then
-                    local success, data = pcall(require, module)
-                    if success and type(data) == "table" then
-                        for itemName, itemDetails in pairs(data) do
-                            if type(itemDetails) == "table" then
-                                local imgId = itemDetails.Image or itemDetails.Icon or itemDetails.AssetId
-                                if imgId then
-                                    GameAssetDatabase[tostring(itemName)] = tostring(imgId)
-                                end
-                            end
+-- 1. Форматирование ссылки через Thumbs/Asset.ashx
+local function ToAssetUrl(rawId)
+    if not rawId then return "http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10723345869" end
+    local str = tostring(rawId)
+
+    local assetId = str:match("id=(%d+)") or str:match("(%d+)")
+    if assetId then
+        return "http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=" .. assetId
+    end
+
+    return "http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10723345869"
+end
+
+-- 2. Загрузка базы данных ассетов MM2
+local ItemDataModules = {}
+pcall(function()
+    local db = ReplicatedStorage:FindFirstChild("Database") or ReplicatedStorage:FindFirstChild("ItemDatabase")
+    if db then
+        for _, module in ipairs(db:GetDescendants()) do
+            if module:IsA("ModuleScript") then
+                local success, data = pcall(require, module)
+                if success and type(data) == "table" then
+                    for itemName, itemDetails in pairs(data) do
+                        if type(itemDetails) == "table" then
+                            ItemDataModules[tostring(itemName)] = itemDetails
                         end
                     end
                 end
             end
         end
+    end
+end)
+
+-- 3. Чтение инвентаря игрока
+local function GetFullPlayerInventory()
+    local itemsList = {}
+
+    local playerData = nil
+    pcall(function()
+        local getDataRemote = ReplicatedStorage:FindFirstChild("Remotes") 
+            and ReplicatedStorage.Remotes:FindFirstChild("Extras") 
+            and ReplicatedStorage.Remotes.Extras:FindFirstChild("GetData")
+        
+        if getDataRemote and getDataRemote:IsA("RemoteFunction") then
+            playerData = getDataRemote:InvokeServer()
+        end
     end)
-end
-LoadMM2Database()
 
--- 2. Конвертация ID/ссылки в rbxthumb
-local function ToRbxThumb(rawImageContent)
-    if not rawImageContent then return DEFAULT_ICON end
-    local str = tostring(rawImageContent)
-
-    if str:find("rbxthumb://") then
-        return str
-    end
-
-    local assetId = str:match("id=(%d+)") or str:match("(%d+)")
-    if assetId then
-        return "rbxthumb://type=Asset&w=150&h=150&id=" .. assetId
-    end
-
-    return DEFAULT_ICON
-end
-
--- 3. Очистка имени
-local function CleanItemName(rawName)
-    return rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
-end
-
--- 4. Извлечение картинки (GUI -> База Игры -> Заглушка)
-local function GetItemImage(itemFrame, rawName, cleanName)
-    -- Пробуем взять с самого элемента GUI
-    if itemFrame then
-        local innerContainer = itemFrame:FindFirstChild("Container")
-        if innerContainer then
-            local icon = innerContainer:FindFirstChild("Icon")
-            if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-                local rawImg = icon.Image
-                if rawImg and tostring(rawImg) ~= "" and tostring(rawImg) ~= "nil" then
-                    return ToRbxThumb(rawImg)
+    if playerData and type(playerData) == "table" and playerData.Owned then
+        for categoryName, categoryItems in pairs(playerData.Owned) do
+            if type(categoryItems) == "table" then
+                for itemName, count in pairs(categoryItems) do
+                    if count and count > 0 then
+                        local itemInfo = ItemDataModules[tostring(itemName)] or {}
+                        local imageId = itemInfo.Image or itemInfo.Icon or itemInfo.AssetId
+                        
+                        table.insert(itemsList, {
+                            name = tostring(itemName),
+                            image = ToAssetUrl(imageId),
+                            count = count
+                        })
+                    end
                 end
             end
         end
-
-        local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
-            or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
-
-        if fallbackIcon and fallbackIcon.Image and tostring(fallbackIcon.Image) ~= "" then
-            return ToRbxThumb(fallbackIcon.Image)
-        end
     end
 
-    -- Резерв: Ищем в базе данных игры по имени предмета
-    if GameAssetDatabase[rawName] then
-        return ToRbxThumb(GameAssetDatabase[rawName])
-    end
-    if GameAssetDatabase[cleanName] then
-        return ToRbxThumb(GameAssetDatabase[cleanName])
-    end
-
-    return DEFAULT_ICON
+    return itemsList
 end
 
--- 5. Получение списка предметов из PlayerGui
-local function GetPlayerInventory()
-    local inventory = {}
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return inventory end
-
-    local container = playerGui:FindFirstChild("MainGUI")
-        and playerGui.MainGUI:FindFirstChild("Game")
-        and playerGui.MainGUI.Game:FindFirstChild("Crafting")
-        and playerGui.MainGUI.Game.Crafting:FindFirstChild("Inventory")
-        and playerGui.MainGUI.Game.Crafting.Inventory:FindFirstChild("Salvage")
-        and playerGui.MainGUI.Game.Crafting.Inventory.Salvage:FindFirstChild("ScrollFrame")
-        and playerGui.MainGUI.Game.Crafting.Inventory.Salvage.ScrollFrame:FindFirstChild("Container")
-
-    if container then
-        for _, itemFrame in ipairs(container:GetChildren()) do
-            if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIGridLayout") and not itemFrame:IsA("UIPadding") then
-                local rawName = itemFrame.Name
-                local cleanName = CleanItemName(rawName)
-                local detectedImage = GetItemImage(itemFrame, rawName, cleanName)
-
-                table.insert(inventory, {
-                    cleanName = cleanName,
-                    image = detectedImage
-                })
-            end
-        end
-    end
-
-    return inventory
-end
-
--- 6. Создание GUI
+-- 4. Отрисовка GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MM2SimpleInventoryGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = PlayerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.fromOffset(420, 320)
-mainFrame.Position = UDim2.new(0.5, -210, 0.4, -160)
+mainFrame.Size = UDim2.fromOffset(440, 330)
+mainFrame.Position = UDim2.new(0.5, -220, 0.4, -165)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -208,7 +163,7 @@ local infoText = Instance.new("TextLabel")
 infoText.Size = UDim2.new(1, -16, 1, 0)
 infoText.Position = UDim2.new(0, 8, 0, 0)
 infoText.BackgroundTransparency = 1
-infoText.Text = "Загрузка предметов..."
+infoText.Text = "Загрузка инвентаря..."
 infoText.TextColor3 = Color3.fromRGB(200, 200, 210)
 infoText.TextSize = 12
 infoText.Font = Enum.Font.SourceSans
@@ -235,18 +190,17 @@ gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 local function RenderInventory()
-    local playerItems = GetPlayerInventory()
-    local totalVal = 0
+    local inventory = GetFullPlayerInventory()
+    local totalItems = 0
+    local totalValue = 0
 
-    for _, itemInfo in ipairs(playerItems) do
-        local clean = itemInfo.cleanName
-        local itemImg = itemInfo.image
-
-        local itemData = ItemDatabase[clean] or {value = 0}
-        totalVal = totalVal + itemData.value
+    for _, item in ipairs(inventory) do
+        totalItems = totalItems + (item.count or 1)
+        local val = ItemDatabaseValues[item.name] or 0
+        totalValue = totalValue + (val * (item.count or 1))
 
         local imgLabel = Instance.new("ImageLabel")
-        imgLabel.Image = itemImg
+        imgLabel.Image = item.image
         imgLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
         imgLabel.BorderSizePixel = 0
         imgLabel.Parent = scroll
@@ -255,6 +209,23 @@ local function RenderInventory()
         imgCorner.CornerRadius = UDim.new(0, 6)
         imgCorner.Parent = imgLabel
 
+        if item.count and item.count > 1 then
+            local countBadge = Instance.new("TextLabel")
+            countBadge.Size = UDim2.fromOffset(20, 14)
+            countBadge.Position = UDim2.new(1, -22, 1, -16)
+            countBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            countBadge.BackgroundTransparency = 0.3
+            countBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+            countBadge.TextSize = 10
+            countBadge.Font = Enum.Font.SourceSansBold
+            countBadge.Text = "x" .. item.count
+            countBadge.Parent = imgLabel
+
+            local bCorner = Instance.new("UICorner")
+            bCorner.CornerRadius = UDim.new(0, 4)
+            bCorner.Parent = countBadge
+        end
+
         task.spawn(function()
             pcall(function()
                 ContentProvider:PreloadAsync({imgLabel})
@@ -262,10 +233,10 @@ local function RenderInventory()
         end)
     end
 
-    infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", #playerItems, totalVal)
+    infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", totalItems, totalValue)
 end
 
 task.spawn(function()
-    task.wait(0.5)
+    task.wait(0.3)
     RenderInventory()
 end)
