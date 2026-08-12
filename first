@@ -1,16 +1,15 @@
-print("[MM2 Viewer] Запуск чистого GUI...")
+print("[MM2 Viewer] Запуск с подгрузкой базы данных...")
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Удаляем старое окно, если оно уже было создано
 if PlayerGui:FindFirstChild("MM2SimpleInventoryGui") then
     PlayerGui.MM2SimpleInventoryGui:Destroy()
 end
 
--- База цен предметов (по очищенному имени)
 local ItemDatabase = {
     ["Bubbles"] = {value = 10},
     ["Corrupt"] = {value = 1850},
@@ -21,7 +20,33 @@ local ItemDatabase = {
 }
 local DEFAULT_ICON = "rbxthumb://type=Asset&w=150&h=150&id=10723345869"
 
--- 1. Конвертация любых ID/ссылок в рабочий формат rbxthumb
+-- 1. Парсинг внутренней базы данных MM2 для получения ID всех предметов
+local GameAssetDatabase = {}
+local function LoadMM2Database()
+    pcall(function()
+        local db = ReplicatedStorage:FindFirstChild("Database") or ReplicatedStorage:FindFirstChild("ItemDatabase")
+        if db then
+            for _, module in ipairs(db:GetDescendants()) do
+                if module:IsA("ModuleScript") then
+                    local success, data = pcall(require, module)
+                    if success and type(data) == "table" then
+                        for itemName, itemDetails in pairs(data) do
+                            if type(itemDetails) == "table" then
+                                local imgId = itemDetails.Image or itemDetails.Icon or itemDetails.AssetId
+                                if imgId then
+                                    GameAssetDatabase[tostring(itemName)] = tostring(imgId)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+LoadMM2Database()
+
+-- 2. Конвертация ID/ссылки в rbxthumb
 local function ToRbxThumb(rawImageContent)
     if not rawImageContent then return DEFAULT_ICON end
     local str = tostring(rawImageContent)
@@ -38,37 +63,46 @@ local function ToRbxThumb(rawImageContent)
     return DEFAULT_ICON
 end
 
--- 2. Очистка имени
+-- 3. Очистка имени
 local function CleanItemName(rawName)
     return rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
 end
 
--- 3. Получение иконки из элемента GUI инвентаря MM2
-local function GetItemImage(itemFrame)
-    if not itemFrame then return DEFAULT_ICON end
-
-    local innerContainer = itemFrame:FindFirstChild("Container")
-    if innerContainer then
-        local icon = innerContainer:FindFirstChild("Icon")
-        if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-            local rawImg = icon.Image
-            if rawImg and tostring(rawImg) ~= "" then
-                return ToRbxThumb(rawImg)
+-- 4. Извлечение картинки (GUI -> База Игры -> Заглушка)
+local function GetItemImage(itemFrame, rawName, cleanName)
+    -- Пробуем взять с самого элемента GUI
+    if itemFrame then
+        local innerContainer = itemFrame:FindFirstChild("Container")
+        if innerContainer then
+            local icon = innerContainer:FindFirstChild("Icon")
+            if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
+                local rawImg = icon.Image
+                if rawImg and tostring(rawImg) ~= "" and tostring(rawImg) ~= "nil" then
+                    return ToRbxThumb(rawImg)
+                end
             end
+        end
+
+        local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
+            or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
+
+        if fallbackIcon and fallbackIcon.Image and tostring(fallbackIcon.Image) ~= "" then
+            return ToRbxThumb(fallbackIcon.Image)
         end
     end
 
-    local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
-        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
-
-    if fallbackIcon and fallbackIcon.Image and tostring(fallbackIcon.Image) ~= "" then
-        return ToRbxThumb(fallbackIcon.Image)
+    -- Резерв: Ищем в базе данных игры по имени предмета
+    if GameAssetDatabase[rawName] then
+        return ToRbxThumb(GameAssetDatabase[rawName])
+    end
+    if GameAssetDatabase[cleanName] then
+        return ToRbxThumb(GameAssetDatabase[cleanName])
     end
 
     return DEFAULT_ICON
 end
 
--- 4. Сбор предметов из инвентаря MM2
+-- 5. Получение списка предметов из PlayerGui
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -87,7 +121,7 @@ local function GetPlayerInventory()
             if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIGridLayout") and not itemFrame:IsA("UIPadding") then
                 local rawName = itemFrame.Name
                 local cleanName = CleanItemName(rawName)
-                local detectedImage = GetItemImage(itemFrame)
+                local detectedImage = GetItemImage(itemFrame, rawName, cleanName)
 
                 table.insert(inventory, {
                     cleanName = cleanName,
@@ -100,15 +134,13 @@ local function GetPlayerInventory()
     return inventory
 end
 
--- 5. Создание чистого GUI окна
+-- 6. Создание GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MM2SimpleInventoryGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = PlayerGui
 
--- Главный контейнер (можно перетаскивать при желании)
 local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.fromOffset(420, 320)
 mainFrame.Position = UDim2.new(0.5, -210, 0.4, -160)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
@@ -121,7 +153,6 @@ local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 10)
 mainCorner.Parent = mainFrame
 
--- Шапка окна
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 35)
 header.BackgroundColor3 = Color3.fromRGB(28, 28, 35)
@@ -143,7 +174,6 @@ title.Font = Enum.Font.SourceSansBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
--- Кнопка закрытия
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.fromOffset(25, 25)
 closeBtn.Position = UDim2.new(1, -30, 0, 5)
@@ -163,7 +193,6 @@ closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- Карточка со статистикой
 local infoFrame = Instance.new("Frame")
 infoFrame.Size = UDim2.new(1, -24, 0, 45)
 infoFrame.Position = UDim2.new(0, 12, 0, 45)
@@ -186,7 +215,6 @@ infoText.Font = Enum.Font.SourceSans
 infoText.TextXAlignment = Enum.TextXAlignment.Left
 infoText.Parent = infoFrame
 
--- Сетка предметов (ScrollingFrame)
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.new(1, -24, 0, 210)
 scroll.Position = UDim2.new(0, 12, 0, 98)
@@ -202,12 +230,10 @@ gridLayout.CellPadding = UDim2.fromOffset(6, 6)
 gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 gridLayout.Parent = scroll
 
--- Автоматический размер скролла
 gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     scroll.CanvasSize = UDim2.fromOffset(0, gridLayout.AbsoluteContentSize.Y + 10)
 end)
 
--- 6. Заполнение GUI данными
 local function RenderInventory()
     local playerItems = GetPlayerInventory()
     local totalVal = 0
@@ -219,7 +245,6 @@ local function RenderInventory()
         local itemData = ItemDatabase[clean] or {value = 0}
         totalVal = totalVal + itemData.value
 
-        -- Рамка с картинкой ножа/пистолета
         local imgLabel = Instance.new("ImageLabel")
         imgLabel.Image = itemImg
         imgLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
@@ -230,7 +255,6 @@ local function RenderInventory()
         imgCorner.CornerRadius = UDim.new(0, 6)
         imgCorner.Parent = imgLabel
 
-        -- Предзагрузка иконки
         task.spawn(function()
             pcall(function()
                 ContentProvider:PreloadAsync({imgLabel})
@@ -241,7 +265,6 @@ local function RenderInventory()
     infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", #playerItems, totalVal)
 end
 
--- Небольшая задержка перед рендером
 task.spawn(function()
     task.wait(0.5)
     RenderInventory()
