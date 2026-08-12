@@ -49,6 +49,12 @@ local Window = WindUI:CreateWindow({
 
 local InvTab = Window:Tab({ Title = "Мой Инвентарь", Icon = "layout-grid" })
 
+Tab:Image({
+    Image = "rbxassetid://138388933477235",
+    AspectRatio = "16:9",
+    Radius = 12,
+})
+
 local InfoParagraph = InvTab:Paragraph({
     Title = "Статус",
     Desc = "Нажмите 'Обновить инвентарь' для загрузки предметов.",
