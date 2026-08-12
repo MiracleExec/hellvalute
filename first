@@ -1,4 +1,4 @@
-print("[MM2 Viewer] Перезапуск с рабочим форматом rbxassetid...")
+print("[MM2 Viewer] Запуск через клонирование GUI...")
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,102 +18,33 @@ local ItemDatabaseValues = {
     ["Bat"] = 1100,
     ["Nikilis Scythe"] = 150000,
 }
-local DEFAULT_ICON = "rbxassetid://10723345869"
 
--- 1. Преобразование любого ID в валидный rbxassetid://
-local function FormatToAssetId(raw)
-    if not raw then return DEFAULT_ICON end
-    local str = tostring(raw)
+-- 1. Поиск оригинальных визуальных элементов инвентаря MM2
+local function FindGameInventoryContainers()
+    local containers = {}
+    local mainGui = PlayerGui:FindFirstChild("MainGUI")
     
-    local id = str:match("(%d+)")
-    if id and #id > 3 then
-        return "rbxassetid://" .. id
+    if mainGui then
+        -- Поиск всех ScrollingFrame и Container внутри GUI инвентаря
+        for _, desc in ipairs(mainGui:GetDescendants()) do
+            if (desc.Name == "Container" or desc.Name == "ScrollFrame") and #desc:GetChildren() > 0 then
+                local hasGuiItems = false
+                for _, child in ipairs(desc:GetChildren()) do
+                    if child:IsA("GuiObject") and not child:IsA("UIComponent") then
+                        hasGuiItems = true
+                        break
+                    end
+                end
+                if hasGuiItems then
+                    table.insert(containers, desc)
+                end
+            end
+        end
     end
-    
-    return DEFAULT_ICON
+    return containers
 end
 
--- 2. Сбор базы данных картинок из ReplicatedStorage
-local ImageDB = {}
-pcall(function()
-    local db = ReplicatedStorage:FindFirstChild("Database") or ReplicatedStorage:FindFirstChild("ItemDatabase")
-    if db then
-        for _, module in ipairs(db:GetDescendants()) do
-            if module:IsA("ModuleScript") then
-                local ok, data = pcall(require, module)
-                if ok and type(data) == "table" then
-                    for itemName, itemDetails in pairs(data) do
-                        if type(itemDetails) == "table" then
-                            local img = itemDetails.Image or itemDetails.Icon or itemDetails.AssetId
-                            if img then
-                                ImageDB[tostring(itemName)] = img
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- 3. Чтение инвентаря игрока
-local function GetPlayerInventory()
-    local inventory = {}
-    
-    -- Пробуем получить данные через Remote
-    local playerData = nil
-    pcall(function()
-        local getDataRemote = ReplicatedStorage:FindFirstChild("Remotes") 
-            and ReplicatedStorage.Remotes:FindFirstChild("Extras") 
-            and ReplicatedStorage.Remotes.Extras:FindFirstChild("GetData")
-        
-        if getDataRemote and getDataRemote:IsA("RemoteFunction") then
-            playerData = getDataRemote:InvokeServer()
-        end
-    end)
-
-    if playerData and type(playerData) == "table" and playerData.Owned then
-        for categoryName, categoryItems in pairs(playerData.Owned) do
-            if type(categoryItems) == "table" then
-                for itemName, count in pairs(categoryItems) do
-                    if count and count > 0 then
-                        local rawImg = ImageDB[tostring(itemName)]
-                        table.insert(inventory, {
-                            name = tostring(itemName),
-                            image = FormatToAssetId(rawImg),
-                            count = count
-                        })
-                    end
-                end
-            end
-        end
-    end
-
-    -- Запасной вариант: сканирование UI инвентаря, если Remote не дал данных
-    if #inventory == 0 then
-        local mainGui = PlayerGui:FindFirstChild("MainGUI")
-        if mainGui then
-            for _, descendant in ipairs(mainGui:GetDescendants()) do
-                if descendant:IsA("ImageLabel") or descendant:IsA("ImageButton") then
-                    if descendant.Image and descendant.Image ~= "" and descendant.Parent then
-                        local parentName = descendant.Parent.Name
-                        if parentName and parentName ~= "Container" and not parentName:find("Frame") then
-                            table.insert(inventory, {
-                                name = parentName,
-                                image = FormatToAssetId(descendant.Image),
-                                count = 1
-                            })
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    return inventory
-end
-
--- 4. Отрисовка интерфейса
+-- 2. Создание GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "MM2SimpleInventoryGui"
 screenGui.ResetOnSpawn = false
@@ -187,7 +118,7 @@ local infoText = Instance.new("TextLabel")
 infoText.Size = UDim2.new(1, -16, 1, 0)
 infoText.Position = UDim2.new(0, 8, 0, 0)
 infoText.BackgroundTransparency = 1
-infoText.Text = "Загрузка..."
+infoText.Text = "Сканирование инвентаря MM2..."
 infoText.TextColor3 = Color3.fromRGB(200, 200, 210)
 infoText.TextSize = 12
 infoText.Font = Enum.Font.SourceSans
@@ -213,51 +144,67 @@ gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     scroll.CanvasSize = UDim2.fromOffset(0, gridLayout.AbsoluteContentSize.Y + 10)
 end)
 
+-- 3. Отрисовка с извлечением картинок напрямую из UI предметов
 local function RenderInventory()
-    local inventory = GetPlayerInventory()
-    local totalItems = 0
-    local totalValue = 0
+    local containers = FindGameInventoryContainers()
+    local addedItems = {}
+    local itemCount = 0
+    local totalVal = 0
 
-    for _, item in ipairs(inventory) do
-        totalItems = totalItems + (item.count or 1)
-        local val = ItemDatabaseValues[item.name] or 0
-        totalValue = totalValue + (val * (item.count or 1))
+    for _, container in ipairs(containers) do
+        for _, itemFrame in ipairs(container:GetChildren()) do
+            if itemFrame:IsA("GuiObject") and not itemFrame:IsA("UIComponent") then
+                local rawName = itemFrame.Name
+                
+                -- Игнорируем технические элементы
+                if rawName ~= "Template" and not addedItems[itemFrame] then
+                    addedItems[itemFrame] = true
+                    
+                    -- Ищем картинку внутри рамочки
+                    local imgObj = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
+                        or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
+                    
+                    local cleanName = rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
+                    local itemValue = ItemDatabaseValues[cleanName] or 0
+                    totalVal = totalVal + itemValue
+                    itemCount = itemCount + 1
 
-        local imgLabel = Instance.new("ImageLabel")
-        imgLabel.Image = item.image
-        imgLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
-        imgLabel.BorderSizePixel = 0
-        imgLabel.Parent = scroll
+                    -- Создаем карточку предмета
+                    local card = Instance.new("Frame")
+                    card.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+                    card.BorderSizePixel = 0
+                    card.Parent = scroll
 
-        local imgCorner = Instance.new("UICorner")
-        imgCorner.CornerRadius = UDim.new(0, 6)
-        imgCorner.Parent = imgLabel
+                    local cardCorner = Instance.new("UICorner")
+                    cardCorner.CornerRadius = UDim.new(0, 6)
+                    cardCorner.Parent = card
 
-        if item.count and item.count > 1 then
-            local countBadge = Instance.new("TextLabel")
-            countBadge.Size = UDim2.fromOffset(20, 14)
-            countBadge.Position = UDim2.new(1, -22, 1, -16)
-            countBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            countBadge.BackgroundTransparency = 0.3
-            countBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
-            countBadge.TextSize = 10
-            countBadge.Font = Enum.Font.SourceSansBold
-            countBadge.Text = "x" .. item.count
-            countBadge.Parent = imgLabel
-
-            local bCorner = Instance.new("UICorner")
-            bCorner.CornerRadius = UDim.new(0, 4)
-            bCorner.Parent = countBadge
+                    if imgObj and imgObj.Image and imgObj.Image ~= "" then
+                        local iconClone = Instance.new("ImageLabel")
+                        iconClone.Size = UDim2.new(1, -8, 1, -8)
+                        iconClone.Position = UDim2.new(0, 4, 0, 4)
+                        iconClone.BackgroundTransparency = 1
+                        iconClone.Image = imgObj.Image
+                        iconClone.Parent = card
+                    else
+                        -- Если картинки нет, пишем название предмета
+                        local lbl = Instance.new("TextLabel")
+                        lbl.Size = UDim2.new(1, -4, 1, -4)
+                        lbl.Position = UDim2.new(0, 2, 0, 2)
+                        lbl.BackgroundTransparency = 1
+                        lbl.Text = cleanName
+                        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+                        lbl.TextSize = 10
+                        lbl.TextWrapped = true
+                        lbl.Font = Enum.Font.SourceSans
+                        lbl.Parent = card
+                    end
+                end
+            end
         end
-
-        task.spawn(function()
-            pcall(function()
-                ContentProvider:PreloadAsync({imgLabel})
-            end)
-        end)
     end
 
-    infoText.Text = string.format("Предметов: %d\nОбщая стоимость: %d Val", totalItems, totalValue)
+    infoText.Text = string.format("Найдено предметов: %d\nОбщая стоимость: %d Val", itemCount, totalVal)
 end
 
 task.spawn(function()
