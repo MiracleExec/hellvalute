@@ -1,13 +1,23 @@
-print("[MM2 Helper] Запуск упрощенного скрипта...")
+print("[MM2 Helper] Запуск скрипта...")
 
--- 1. Загрузка WindUI
-local WIND_UI_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
-local success, WindUI = pcall(function()
-    return loadstring(game:HttpGet(WIND_UI_URL))()
-end)
+-- 1. Безопасная загрузка WindUI через список зеркал
+local WIND_UI_URLS = {
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+}
 
-if not success or not WindUI then
-    error("[MM2 Helper] Не удалось загрузить WindUI!")
+local WindUI = nil
+for _, url in ipairs(WIND_UI_URLS) do
+    local success, result = pcall(function()
+        return loadstring(game:HttpGet(url))()
+    end)
+    if success and result then
+        WindUI = result
+        break
+    end
+end
+
+if not WindUI then
+    error("[MM2 Helper] Не удалось загрузить WindUI с зеркал!")
     return
 end
 
@@ -15,7 +25,7 @@ local Players = game:GetService("Players")
 local ContentProvider = game:GetService("ContentProvider")
 local LocalPlayer = Players.LocalPlayer
 
--- База цен (заполняйте по названию предмета)
+-- База цен предмета (по очищенному имени)
 local ItemDatabase = {
     ["Bubbles"] = {value = 10},
     ["Corrupt"] = {value = 1850},
@@ -24,9 +34,28 @@ local ItemDatabase = {
     ["Bat"] = {value = 1100},
     ["Nikilis Scythe"] = {value = 150000},
 }
-local DEFAULT_ICON = "rbxassetid://10723345869"
+local DEFAULT_ICON = "rbxthumb://type=Asset&w=150&h=150&id=10723345869"
 
--- 2. Создание окна UI
+-- 2. Функция гарантированного превращения любой ссылки/ID в rbxthumb
+local function ToRbxThumb(rawImageContent)
+    if not rawImageContent then return DEFAULT_ICON end
+    local str = tostring(rawImageContent)
+
+    -- Если это уже rbxthumb ссылка — возвращаем как есть
+    if str:find("rbxthumb://") then
+        return str
+    end
+
+    -- Вытаскиваем ID (числа) из rbxassetid://..., Content объекта или обычного текста
+    local assetId = str:match("id=(%d+)") or str:match("(%d+)")
+    if assetId then
+        return "rbxthumb://type=Asset&w=150&h=150&id=" .. assetId
+    end
+
+    return DEFAULT_ICON
+end
+
+-- 3. Создание окна UI
 local Window = WindUI:CreateWindow({
     Title = "MM2 Inventory Viewer",
     Icon = "box",
@@ -42,12 +71,12 @@ local InfoParagraph = InvTab:Paragraph({
     Desc = "Загрузка инвентаря...",
 })
 
--- 3. Функция очистки имени
+-- 4. Функция очистки имени ножа/пистолета
 local function CleanItemName(rawName)
     return rawName:gsub("_%a+_%d+", ""):gsub("_%d+", "")
 end
 
--- 4. Функция безопасного извлечения картинки
+-- 5. Извлечение картинки из GUI инвентаря MM2
 local function GetItemImage(itemFrame)
     if not itemFrame then return DEFAULT_ICON end
 
@@ -57,7 +86,7 @@ local function GetItemImage(itemFrame)
         if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
             local rawImg = icon.Image
             if rawImg and tostring(rawImg) ~= "" then
-                return tostring(rawImg)
+                return ToRbxThumb(rawImg)
             end
         end
     end
@@ -65,14 +94,14 @@ local function GetItemImage(itemFrame)
     local fallbackIcon = itemFrame:FindFirstChildWhichIsA("ImageLabel", true) 
         or itemFrame:FindFirstChildWhichIsA("ImageButton", true)
 
-    if fallbackIcon and fallbackIcon.Image then
-        return tostring(fallbackIcon.Image)
+    if fallbackIcon and fallbackIcon.Image and tostring(fallbackIcon.Image) ~= "" then
+        return ToRbxThumb(fallbackIcon.Image)
     end
 
     return DEFAULT_ICON
 end
 
--- 5. Поиск предметов в PlayerGui MM2
+-- 6. Чтение контейнера инвентаря
 local function GetPlayerInventory()
     local inventory = {}
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
@@ -104,7 +133,7 @@ local function GetPlayerInventory()
     return inventory
 end
 
--- 6. Отрисовка сеточки с картинками
+-- 7. Отрисовка сетки с иконками
 local gridFrame = nil
 
 local function ShowInventory()
@@ -136,7 +165,6 @@ local function ShowInventory()
         local itemData = ItemDatabase[clean] or {value = 0}
         totalVal = totalVal + itemData.value
 
-        -- Рамка предмета с картинкой
         local imgLabel = Instance.new("ImageLabel")
         imgLabel.Image = itemImg
         imgLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
@@ -147,7 +175,6 @@ local function ShowInventory()
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = imgLabel
 
-        -- Предзагрузка
         task.spawn(function()
             pcall(function()
                 ContentProvider:PreloadAsync({imgLabel})
@@ -155,12 +182,10 @@ local function ShowInventory()
         end)
     end
 
-    -- Обновляем текст со статистикой
     InfoParagraph:SetTitle("Найдено предметов: " .. #playerItems)
     InfoParagraph:SetDesc("Общая стоимость инвентаря: " .. totalVal .. " Val")
 end
 
--- Запуск при старте
 task.spawn(function()
     task.wait(1)
     ShowInventory()
